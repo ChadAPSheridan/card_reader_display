@@ -3,8 +3,10 @@ import logging
 import smbus
 from time import sleep, strftime
 from datetime import datetime
+from threading import Thread
 from Display_src.LCD1602 import CharLCD1602
 from RFID_src.SimpleMFRC522 import SimpleMFRC522  # Import the RFID library
+import rdm6300
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -43,20 +45,61 @@ def display_rfid_data(id, text):
     lcd1602.write(0, 1, text)
     sleep(2)
 
+def read_simple_mfrc522():
+    while True:
+        try:
+            id, text = reader.read_no_block()
+            if id not in [None, ''] and text not in [None, '']:
+                logging.debug(f'RFID tag read: ID={id}, Text={text}')
+                display_rfid_data(id, text)
+        except Exception as e:
+            logging.error(f'Error reading SimpleMFRC522: {e}')
+        sleep(1)
+
+def read_rdm6300():
+    while True:
+        try:
+            rdm_card = rdm_reader.start()
+            if rdm_card:
+                logging.debug(f'RDM6300 card read: ID={rdm_card.value}')
+                display_rfid_data(rdm_card.value, "RDM6300 Card")
+        except Exception as e:
+            logging.error(f'Error reading RDM6300: {e}')
+        sleep(1)
+
 def loop():
     lcd1602.init_lcd()
     logging.info('LCD initialized')
+    display_cpu_and_time()
+    prompt_for_rfid()
+
+    # Start threads for reading from both readers
+    simple_thread = Thread(target=read_simple_mfrc522)
+    rdm_thread = Thread(target=read_rdm6300)
+    simple_thread.start()
+    rdm_thread.start()
+
+    # Keep the main thread alive
     while True:
         display_cpu_and_time()
-        id, text = reader.read()
-        if id not in [None, ''] and text not in [None, '']:
-            logging.debug(f'RFID tag read: ID={id}, Text={text}')
-            display_rfid_data(id, text)
-        sleep(1)
+        sleep(10)
 
 def destroy():
     lcd1602.clear()
     logging.info('LCD cleared')
+
+class RDM6300Reader(rdm6300.BaseReader):
+    def card_inserted(self, card):
+        logging.info(f"RDM6300 card inserted {card}")
+        display_rfid_data(card.value, "RDM6300 Card")
+
+    def card_removed(self, card):
+        logging.info(f"RDM6300 card removed {card}")
+
+    def invalid_card(self, card):
+        logging.info(f"RDM6300 invalid card {card}")
+
+rdm_reader = RDM6300Reader('/dev/ttyS0')
 
 if __name__ == '__main__':
     logging.info('Program is starting ...')
